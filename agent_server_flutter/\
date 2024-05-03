@@ -1,0 +1,206 @@
+import 'dart:async';
+import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import 'package:dbus/dbus.dart';
+import 'package:flex_color_scheme/flex_color_scheme.dart';
+import './dbus/agent.dart';
+
+
+// Step 1: Create a data provider class
+abstract class StringQueueProvider with ChangeNotifier {
+  String _content = "";
+
+  String get content => _content;
+
+  set content(String str) {
+    _content = str;
+    notifyListeners();
+  }
+
+  void clear() {
+    _content = "";
+    notifyListeners();
+  }
+}
+
+class InputQueueProvider extends StringQueueProvider {
+  bool _active = false;
+  bool _finished = false;
+  bool get finished => _finished;
+  bool get active => _active;
+  void set active(bool value) {
+    _active = value;
+    notifyListeners();
+  }
+
+  void set finished(bool value) {
+    _finished = value;
+    notifyListeners();
+  }
+
+  @override
+  void clear() {
+    _active = false;
+    _finished = false;
+    super.clear();
+  }
+}
+
+class OutputQueueProvider extends StringQueueProvider {
+  bool _active = false;
+  bool get active => _active;
+  void set active(bool value) {
+    _active = value;
+    notifyListeners();
+  }
+
+  @override
+  void clear() {
+    _active = false;
+    super.clear();
+  }
+}
+
+void main() {
+  runApp(MultiProvider(providers: [
+    ChangeNotifierProvider(create: (context) => InputQueueProvider()),
+    ChangeNotifierProvider(create: (context) => OutputQueueProvider()),
+  ], child: MyApp()));
+}
+
+class MyApp extends StatelessWidget {
+  const MyApp({super.key});
+
+  // This widget is the root of your application.
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+        title: 'Flutter Demo',
+        debugShowCheckedModeBanner: false,
+        theme: FlexThemeData.dark(
+            scheme: FlexScheme.hippieBlue,
+            darkIsTrueBlack: true,
+            subThemesData: const FlexSubThemesData(
+              blendOnLevel: 10,
+            )),
+        home: Stack(children: [
+          DbusClientWidget(),
+          MyHomePage(title: 'Flutter Demo Home Page')
+        ]));
+  }
+}
+
+class DbusClientWidget extends StatelessWidget {
+  late DBusClient client;
+  late OrgAgentserverAgent agentInterface;
+  DbusClientWidget() {
+    client = DBusClient.system();
+    agentInterface = OrgAgentserverAgent(client, "org.agentserver.httpagent",
+        DBusObjectPath("/org/agentserver/httpagent"));
+  }
+  @override
+  Widget build(BuildContext context) {
+    return Stack(
+      children: [
+        Consumer<InputQueueProvider>(
+          builder: (context, queue, child) {
+            Future.delayed(Duration.zero, () async {
+              if (queue.finished) {
+                var output =
+                    Provider.of<OutputQueueProvider>(context, listen: false);
+                var content = queue.content;
+
+                queue.clear();
+                output.clear();
+                print(queue.content);
+                var result = await agentInterface.callCall(content, "");
+
+                output.active = true;
+                output.content = result;
+              }
+            });
+            return child!;
+          },
+          child: SizedBox.shrink(),
+        ),
+
+      ],
+    );
+  }
+}
+
+class MyHomePage extends StatefulWidget {
+  const MyHomePage({super.key, required this.title});
+  final String title;
+
+  @override
+  State<MyHomePage> createState() => _MyHomePageState();
+}
+
+class _MyHomePageState extends State<MyHomePage> {
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      /* appBar: AppBar(
+          title: TextField(
+        onTap: () {
+          Provider.of<InputQueueProvider>(context, listen: false).active = true;
+        },
+        onChanged: (value) {
+          var p = Provider.of<InputQueueProvider>(context, listen: false);
+          if (p.finished) {
+            print("break");
+            return;
+          }
+          Provider.of<InputQueueProvider>(context, listen: false).content =
+              value;
+        },
+        onSubmitted: (_) {
+          Provider.of<InputQueueProvider>(context, listen: false).finished =
+              true;
+        },
+      )), */
+      body: KeyboardListener(child:Center(child: ConversationPage()),onKeyEvent: (KeyEvent e){print(e.character);},focusNode: FocusNode(),),
+    ); // This trailing comma makes auto-formatting nicer for build methods
+  }
+}
+
+class ConversationPage extends StatefulWidget {
+  @override
+  State<ConversationPage> createState() => _ConversationPageState();
+}
+
+class _ConversationPageState extends State<ConversationPage> {
+  @override
+  Widget build(BuildContext context) {
+    ThemeData themeData = Theme.of(context);
+    InputQueueProvider input = Provider.of<InputQueueProvider>(context);
+    OutputQueueProvider output = Provider.of<OutputQueueProvider>(context);
+    late Widget widget;
+    if (input.active) {
+      if (input.content != "") {
+        widget = Text(input.content, style: themeData.textTheme.displaySmall);
+      } else {
+        widget = Text("...");
+      }
+    } else if (output.active) {
+      widget = Text(output.content, style: themeData.textTheme.headlineMedium);
+    } else {
+      widget = Text("...");
+    }
+    Size size = MediaQuery.of(context).size;
+    double width = size.width;
+    double height = size.height;
+
+    return FittedBox(
+      fit: BoxFit.contain,
+      child: SizedBox(
+          height: height / (3 / 2),
+          width: width / (3 / 2),
+          child: AspectRatio(
+            aspectRatio: 16 / 9,
+            child: Center(child: widget),
+          )),
+    );
+  }
+}
